@@ -1,0 +1,521 @@
+## mapas:
+## IPM:
+#C:\Users\Usuario\Desktop\informaci?n-data\ipm
+## MAPAS PROFESOR:
+#C:\Users\Usuario\Desktop\informaci?n-data\mapas profesor
+## CENSO
+#C:\Users\Usuario\Desktop\informaci?n-data\censo cnpv2018
+## BASE
+#"C:/Users/Usuario/Desktop/informaci?n-data/econobases.xlsx"
+
+library(repr)
+# Librer?a para importar los datos
+# Proceso de importaci?n de datos
+library(readxl)
+data_segv <- read_excel("F:/informaci?n-data/econobases.xlsx")
+data <- data.frame(data_segv) #se almacena en un dataframe
+head(data)
+
+# Transformemos las cadenas de caracteres primero
+library(dplyr)
+data <- data %>%
+  mutate_if(is.character,factor)
+
+# Ahora s?, el resumen num?rico:
+
+summary(data)
+
+#Y, ahora, los mapas. Trabajaremos con el mapa de municipio de 
+#colombia mpios en la carpeta del enlace:
+
+# Usaremos esta librer?a para importar los mapas (ya hablaremos 
+#de los mapas en su momento)
+library(rgdal)
+
+
+# Importamos el mapa
+setwd("F:/informaci?n-data/prueba")
+mapa_mpios <- readOGR(dsn = 'mapas_profesor',layer="mpios") #se almacena mapa normal
+
+# Veamos el encabezado de los datos
+head(mapa_mpios@data)
+
+# Si vemos que los datos muestran caracteres extra?os para su contenido usamos estas l?neas
+Encoding(mapa_mpios@data$MPIO_CNMBR) <- "UTF-8"
+head(mapa_mpios@data)
+
+#Organizar el data.frame del mapa:
+mapa_mpios@data <- mapa_mpios@data #se quita la cuarta columna
+mapa_2 <- mapa_mpios
+names(mapa_2@data)
+#creo que elimina la columna del nombre de los municipios cnmbr
+
+#se le cambiaron los nombres de los titulos
+names(mapa_2@data) <- c(
+  'DPTOMPIO', 'DPTO_CCDGO', 'MPIO_CCDGO','Entidad', 'C?digo.Entidad'
+)
+head(mapa_2@data)
+#####################################################################################
+mapa_santander_mun<-mapa_2[mapa_2$DPTO_CCDGO=="68",]
+####################################################################################
+#Y a?adimos la informaci?n de mortalidad, nacimientos, proyecciones y dimensiones
+head(left_join(
+  mapa_santander_mun@data, data[,c(1,3,4:6)], by = 'C?digo.Entidad'
+))
+
+mapa_santander_mun@data <- left_join(
+  mapa_santander_mun@data, data[,c(1,3,4:6)], by = 'C?digo.Entidad'
+)
+
+#Por ejemplo, en el mapa siguiente visualizaremos c?mo se distribuy? en el 
+#territorio nacional la proporci?n de infantes muertos obtenidos por 
+#partido espec?fico:
+
+library(tmap)
+tm_shape(mapa_santander_mun) +
+  tm_fill(col = 'Tasa.de.mortalidad.infantil', 
+          title = '',
+          #breaks = c(),  
+          legend.hist = F) +
+  tm_legend(legend.outside = TRUE, legend.outside.position="right")
+
+####################################################################################
+####################################################################################
+
+#Usaremos el ?ndice de pobreza multidimensional -IPM- con enfoque territorial que 
+#mide el DANE (recordemos que el IPM mide provaciones y falta de oportunidades, 
+#a mayor ?ndice, mayor es el nivel de provaciones). Usaremos el 
+#mapa publicado por el DANE en su geoportal:
+
+mapa_ipm <- readOGR(dsn = 'ipm', layer = 'ipm') #aqu? se almacena mapa ipm
+substring(mapa_ipm@data$MPIO,1,2) #indice 1 y 2 por lo que hay muchos decimales
+mapa_ipm@data$DPTO<- substring(mapa_ipm@data$MPIO,1,2)
+head(mapa_ipm@data)
+mapa_santander<-mapa_ipm[mapa_ipm$DPTO=="68",]
+# Una copia del mapa
+mapa_3 <- mapa_santander
+head(mapa_3@data)
+
+#Quitar valores perdidos(NA) y categorizar la variable IPM.
+mapa_3 <- mapa_3[!is.na(mapa_3$ipm),]
+mapa_3@data$F.IPM <- cut(mapa_3@data$ipm,
+                         breaks = c(0,17,33,56,79,100), include.lowest=T) #variable categorizada,porque lo parte asi
+head(mapa_3@data)
+
+
+############## La tabla de conteos de lugares con privaciones, no se suponia era las mayores a 33% #############
+tabla1 <- with(mapa_3@data[mapa_3@data$F.IPM == '(79,100]'|
+                             mapa_3@data$F.IPM == '(56,79]'|
+                                mapa_3@data$F.IPM == '(33,56]',],
+               data.frame(table(MPIO))) # porque MMPIO? EL NOMBRE DE LOS ARCHIVOS?
+head(tabla1)
+
+############################################# La tabla de conteos totales ######################################
+tabla2 <- with(mapa_3@data,
+               data.frame(table(MPIO)))
+head(tabla2)
+
+########################################## La tabla del IPM medio por municipio ################################
+tabla3 <- aggregate(ipm~MPIO, FUN = mean, data = mapa_3@data)
+head(tabla3)
+
+#Creadas las tablas, las unimos y luego las anexamos al mapa, 
+#como son pocas, podemos hacerlo una por una:
+privados <- left_join(tabla2, tabla1, by = 'MPIO')
+privados <- left_join(privados, tabla3, by = 'MPIO')
+names(privados) <- c('C?digo.Entidad', 'Total', 'Privados', 'IPM') #?PORQUE MPIO_CDPMP?
+head(privados)
+dim(privados) 
+
+#En esta tabla, la presencia de valores perdidos sugiere ausencia de 
+#lugares con privaciones (por lo general, se trata de territorios netamente 
+#                         rurales con uso del suelo no destinado a la vivienda), 
+#entonces, vamos a remplazar los NA por 0:
+
+privados$Privados[is.na(privados$Privados)] <- 0 #Porque Privados en mayuscula, es nueva variable?
+privados$Prop <- privados$Privados/privados$Total #proporci?n de privados con total
+head(privados)
+
+#Y a?adimos estos datos al mapa:
+mapa_santander_mun@data <- left_join(mapa_santander_mun@data,privados, by = 'C?digo.Entidad') #?llave?
+head(mapa_santander_mun@data)
+
+#Un resumen num?rico:
+summary(mapa_santander_mun@data)
+
+#Para los valores perdidos vamosa asignar los promedios, esto para efecto del ejercicio. 
+#Recordemos que la imputaci?n de datos tiene un procedimiento m?s extenso.
+
+##### NOTA: Ver que variables tienen datos NA en el summary anterior #########
+
+# Media del Tasa de mortalidad infantil
+mapa_santander_mun@data$Tasa.de.mortalidad.infantil[is.na(mapa_santander_mun@data$Tasa.de.mortalidad.infantil)] <- 
+  mean(na.omit(mapa_santander_mun@data$Tasa.de.mortalidad.infantil))
+summary(mapa_santander_mun@data)
+
+##########################################################################
+#### 1 pregunta, parece que no hay 
+#mapa_santander_mun@data$IPM100 <- mapa_santander_mun@data$IPM
+#mapa_santander_mun@data$IPM <- mapa_santander_mun@data$IPM/100
+#summary(mapa_santander_mun@data)
+###########################################################################
+# Trasformaci?n de cadenas de caracteres en factores
+mapa_santander_mun@data <- mapa_santander_mun@data %>%
+  mutate_if(is.character,factor)
+summary(mapa_santander_mun@data)
+
+library(ggplot2)
+library(Rmisc)
+
+#as.numeric(as.character(mapa_santander_mun@data$Tasa.de.mortalidad.infantil))
+###### 2 preguntas ####
+multiplot(
+  ggplot(data = mapa_santander_mun@data, aes(x = Tasa.de.mortalidad.infantil)) + geom_histogram(),
+  ggplot(data = mapa_santander_mun@data, aes(x = Tasa.de.producci?n)) + geom_histogram(),
+  ggplot(data = mapa_santander_mun@data, aes(x = Promedio.de.controles.prenatales)) + geom_histogram(),
+  ggplot(data = mapa_santander_mun@data, aes(x = IPM.y)) + geom_histogram(),
+  cols = 4)
+
+library(classInt)
+
+####### Retificar esto #########
+intervalos_tmi <- classIntervals(seq(from = 2, to = 60, by = 0.1), #que es esto
+                             n=5, style="fisher")$brks #?????
+
+intervalos_pcp <- classIntervals(seq(from = 4, to = 8, by = 0.1), #que es esto
+                             n=5, style="fisher")$brks #?????
+
+intervalos_tp <- classIntervals(seq(from = 0, to = 0.09, by = 0.01), #que es esto
+                             n=5, style="fisher")$brks #?????
+
+intervalos_ipm <- classIntervals(seq(from = 6, to = 42, by = 0.1), #que es esto
+                             n=5, style="fisher")$brks #?????
+
+#Y creamos los mapas:
+
+# Mapa de Tasa.de.mortalidad.infantil
+mTasa.de.mortalidad.infantil <- qtm(mapa_santander_mun, "Tasa.de.mortalidad.infantil", fill.breaks = intervalos_tmi,
+            borders = NULL, fill.title="P. Tasa.de.mortalidad.infantil") +
+  tm_layout(bg.color = "lightblue") + 
+  tm_legend(legend.position = c("left", "top"))
+
+# Mapa de Tasa.de.producci?n
+mTasa.de.producci?n <- qtm(mapa_santander_mun, "Tasa.de.producci?n", fill.breaks = intervalos_tp,
+            borders = NULL, fill.title="P. Tasa.de.producci?n") +
+  tm_layout(bg.color = "lightblue") + 
+  tm_legend(legend.position = c("left", "top"))
+
+# Mapa de Promedio.de.controles.prenatales
+mPromedio.de.controles.prenatales <- qtm(mapa_santander_mun, "Promedio.de.controles.prenatales", fill.breaks = intervalos_pcp,
+            borders = NULL, fill.title="P. Promedio.de.controles.prenatales") +
+  tm_layout(bg.color = "lightblue") + 
+  tm_legend(legend.position = c("left", "top"))
+
+# Mapa de IPM
+mipm <- qtm(mapa_santander_mun, "IPM.y", fill.breaks = intervalos_ipm,
+            borders = NULL, fill.title="IPM") +
+  tm_layout(bg.color = "lightblue") + 
+  tm_legend(legend.position = c("left", "top"))
+
+#Recordemos un primer enfoque antes de entrar en los mapas. Entonces, 
+#revisaremos la relaci?n directa entre la proporci?n de tasa de mortalidad,
+#Tasa de producci?n, promedio de controles prenatales y 
+#el IPM ?Qu? nos dicen los gr?ficos?:
+
+####### retificar si todas contra ipm, o todas contra tasa de mortalidad infantil #####
+library(ggplot2)
+multiplot(
+  ggplot(data = mapa_santander_mun@data, aes(x = IPM.y, y = Tasa.de.mortalidad.infantil)) +
+    geom_point() +
+    geom_smooth() +
+    labs(x = '?ndice de Pobreza multidimensional', y = 'Tasa.de.mortalidad.infantil') +
+    theme_bw(),
+  ggplot(data = mapa_santander_mun@data, aes(x = Tasa.de.producci?n, y = Tasa.de.mortalidad.infantil)) +
+    geom_point() +
+    geom_smooth() +
+    labs(x = 'Tasa de producci?n', y = 'Tasa.de.mortalidad.infantil') +
+    theme_bw(),
+  ggplot(data = mapa_santander_mun@data, aes(x = Promedio.de.controles.prenatales, y = Tasa.de.mortalidad.infantil)) +
+    geom_point() +
+    geom_smooth() +
+    labs(x = 'Proporci?n Promedio.de.controles.prenatales', y = 'Tasa.de.mortalidad.infantil') +
+    theme_bw(),
+  cols = 3
+)
+
+#Veamos los mapas ?Qu? nos sugieren? ?Hay relaci?n con lo anterior?
+multiplot(mTasa.de.mortalidad.infantil, mTasa.de.producci?n, mPromedio.de.controles.prenatales, mipm ,cols = 4)
+
+###################################################################################
+#################### Matriz de Pesos Espaciales ###################################
+###################################################################################
+
+#Una medida necesaria para el an?lisis de los datos es la matriz de pesos espaciales. 
+#Vamos a usar el centro geom?trico de cada pol?gono que representa cada municipio 
+#para identificar los centroides:
+
+library(spdep) # la librer?a requerida
+
+# Estamos construyendo los centroides
+map_crd <- coordinates(mapa_santander_mun)
+W_vot <- poly2nb(mapa_santander_mun, queen=T)
+W_vot_mat <- nb2listw(W_vot, style="W", zero.policy=TRUE)
+
+par(mar=rep(0,4)) #### pregunta 3
+plot(mapa_santander_mun, border = 'grey')
+plot(W_vot_mat,coords=map_crd,pch=19, cex=0.1, col="red", add = T)
+
+#Con la matriz de pesos espaciales podemos calcular las diferentes medidas de asociaci?n. 
+#Empecemos con la I de Mor?n para cada variable. ?Qu? observamos en los resultados?
+
+########################## Calculemos la I de Mor?n #################################
+#### pregunta 4 ####
+moran.test(mapa_santander_mun$Tasa.de.mortalidad.infantil, listw=W_vot_mat, zero.policy=T)
+
+moran.test(mapa_santander_mun$Tasa.de.producci?n, listw=W_vot_mat, zero.policy=T)
+
+moran.test(mapa_santander_mun$Promedio.de.controles.prenatales, listw=W_vot_mat, zero.policy=T)
+
+moran.test(mapa_santander_mun$IPM.y, listw=W_vot_mat, zero.policy=T)
+
+
+######################## Gtr?ficamente, la I de Mor?n: ###########################
+################### 3 Veamos gr?ficamente la I de Mor?n ############################
+par(mar=c(4,4,1.5,0.5))
+moran.plot(mapa_santander_mun$Tasa.de.mortalidad.infantil, listw=W_vot_mat, zero.policy=T,
+           pch=16, col="black",cex=.5, quiet=F, labels=as.character(mapa_santander_mun$MUNICIPIO),xlab="% Tasa.de.mortalidad.infantil", 
+           ylab="% Tasa.de.mortalidad.infantilf (Rezago Espacial)", main="I de Mor?n, Gr?fica de Dispersi?n")
+
+par(mar=c(4,4,1.5,0.5))
+moran.plot(mapa_santander_mun$Tasa.de.producci?n, listw=W_vot_mat, zero.policy=T,
+           pch=16, col="black",cex=.5, quiet=F, labels=as.character(mapa_santander_mun$MUNICIPIO),xlab="% Tasa.de.producci?n", 
+           ylab="% Tasa.de.producci?n (Rezago Espacial)", main="I de Mor?n, Gr?fica de Dispersi?n")
+
+par(mar=c(4,4,1.5,0.5))
+moran.plot(mapa_santander_mun$Promedio.de.controles.prenatales, listw=W_vot_mat, zero.policy=T,
+           pch=16, col="black",cex=.5, quiet=F, labels=as.character(mapa_santander_mun$MUNICIPIO),xlab="% Promedio.de.controles.prenatales", 
+           ylab="% Promedio.de.controles.prenatales (Rezago Espacial)", main="I de Mor?n, Gr?fica de Dispersi?n")
+
+
+par(mar=c(4,4,1.5,0.5))
+moran.plot(mapa_santander_mun$IPM.y, listw=W_vot_mat, zero.policy=T,
+           pch=16, col="black",cex=.5, quiet=F, labels=as.character(mapa_santander_mun$MUNICIPIO),xlab="IPM/100", 
+           ylab="IPM/100 (Rezago Espacial)", main="I de Mor?n, Gr?fica de Dispersi?n")
+
+################################# Ahora calculemos el ?ndice local #############################
+lm1 <- localmoran(mapa_santander_mun$Tasa.de.mortalidad.infantil, listw=W_vot_mat, zero.policy=T)
+head(lm1)
+
+mapa_santander_mun$lm1 <- abs(lm1[,4]) ## Extract z-values
+lm.palette <- colorRampPalette(c("white","orange", "red"), space = "rgb")
+# ?Que pasa si cambiamos el orden de los colores a "red","orange", "white"?
+
+spplot(mapa_santander_mun, zcol="lm1", col.regions=lm.palette(20), col="transparent", 
+       main="Correlaci?n Local Tasa.de.mortalidad.infantil",
+       par.settings = list(panel.background=list(col="lightblue")))
+
+lm2 <- localmoran(mapa_santander_mun$Tasa.de.producci?n, listw=W_vot_mat, zero.policy=T)
+head(lm2)
+
+lm3 <- localmoran(mapa_santander_mun$Promedio.de.controles.prenatales, listw=W_vot_mat, zero.policy=T)
+head(lm3)
+
+lm4 <- localmoran(mapa_santander_mun$IPM.y, listw=W_vot_mat, zero.policy=T)
+head(lm4)
+
+mapa_santander_mun$lm2 <- abs(lm2[,4]) ## Extract z-values
+lm.palette <- colorRampPalette(c("white","orange", "red"), space = "rgb")
+
+spplot(mapa_santander_mun, zcol="lm2", col.regions=lm.palette(20), col="transparent", 
+       main="Correlaci?n Local tasa de produccion",
+       par.settings = list(panel.background=list(col="lightblue")))
+
+mapa_santander_mun$lm3 <- abs(lm3[,4]) ## Extract z-values
+lm.palette <- colorRampPalette(c("white","orange", "red"), space = "rgb")
+
+spplot(mapa_santander_mun, zcol="lm3", col.regions=lm.palette(20), col="transparent", 
+       main="Correlaci?n Local controles prenatales",
+       par.settings = list(panel.background=list(col="lightblue")))
+
+mapa_santander_mun$lm4 <- abs(lm4[,4]) ## Extract z-values
+lm.palette <- colorRampPalette(c("white","orange", "red"), space = "rgb")
+
+spplot(mapa_santander_mun, zcol="lm4", col.regions=lm.palette(20), col="transparent", 
+       main="Correlaci?n Local IPM",
+       par.settings = list(panel.background=list(col="lightblue")))
+
+################################# Regresi?n Espacial ################################
+
+#Vamos a construir algunos de los modelos vistos en la clase. 
+#Hemos estado revisando la respuesta espacial de todas las 
+#variables pero vamos a fijar el siguiente modelo:
+# Tasa.de.mortalidad.infantil%=f(IPM)
+#Y revisaremos las distintas opciones. Empecemos por lo m?s 
+#intuitivo, el modelo lineal. Veamos c?mo es la relaci?n 
+#lineal de las variables:
+
+ggplot(data = mapa_santander_mun@data, aes(x = IPM.y, y = Tasa.de.mortalidad.infantil)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  labs(x = 'IPM', y = 'Tasa.de.mortalidad.infantil') +
+  theme_bw() +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14))
+
+
+ggplot(data = mapa_santander_mun@data, aes(x = Tasa.de.producci?n, y = Tasa.de.mortalidad.infantil)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  labs(x = 'Tasa.de.producci?n', y = 'Tasa.de.mortalidad.infantil') +
+  theme_bw() +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14))
+
+ggplot(data = mapa_santander_mun@data, aes(x = Promedio.de.controles.prenatales, y = Tasa.de.mortalidad.infantil)) +
+  geom_point() +
+  geom_smooth(method = 'lm') +
+  labs(x = 'Promedio.de.controles.prenatales', y = 'Tasa.de.mortalidad.infantil') +
+  theme_bw() +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 14))
+
+
+#Y el modelo:
+# Lineal
+mod.lm <- lm(Tasa.de.mortalidad.infantil ~ IPM.y+Tasa.de.producci?n+Promedio.de.controles.prenatales, data=mapa_santander_mun)
+summary(mod.lm)
+
+summary(aov(mod.lm))
+
+#Los resultados nos siguieren que el modelo explica 
+#adecuadamente la relaci?n entre variables:
+# ?Qu? tal el ajuste del modelo?.
+#?Qu? nos sugiere el An?lisis de la Varianza?
+#?Qu? nos sugieren los resultados observados?
+#Veamos los residuales
+summary(mod.lm$residuals)
+
+res.ml <- mod.lm$residuals
+
+res.palette <- colorRampPalette(c("red","orange","white", "lightgreen","green"), space = "rgb")
+pal <- res.palette(5)
+
+classes_fx <- classIntervals(res.ml, n=5, style="fisher")
+cols <- findColours(classes_fx,pal)
+
+par(mar=rep(0,4), bg="lightblue")
+plot(mapa_santander_mun,col=cols, 
+     border= cols)
+legend(x="topleft",cex=1,fill=attr(cols,"palette"),
+       bty="n",legend=names(attr(cols, "table")),
+       title="Residuals from OLS Model",ncol=1)
+
+## Residual Autocorrelation
+moran.test(res.ml, listw=W_vot_mat, zero.policy=T)
+
+#Como vemos, los residuales presentan un comportamiento 
+#espacial, por lo tanto, el bajo ajuste del modelo puede 
+#estar asociado a las relaciones espaciales exitentes 
+#entre los distintos entes territoriales, en este caso, 
+#los municipios. Veamos ahora el primer modelo espacial:
+
+##################################### SAR ##########################################
+library(spatialreg)
+
+mod.sar <- lagsarlm(Tasa.de.mortalidad.infantil ~ IPM.y+Tasa.de.producci?n+Promedio.de.controles.prenatales, data = mapa_santander_mun, listw=W_vot_mat, zero.policy=T, tol.solve=1e-12)
+summary(mod.sar)
+
+res.sar <- mod.sar$residuals
+
+classes_fx <- classIntervals(res.sar, n=5, style="fisher", rtimes = 1)
+cols <- findColours(classes_fx,pal)
+
+par(mar=rep(0,4), bg="lightblue")
+plot(mapa_santander_mun,col=cols, border=cols)
+legend(x="topleft",cex=1,fill=attr(cols,"palette"),bty="n",
+       legend=names(attr(cols, "table")),title="Residuals from SAR Model",ncol=1)
+
+## Residual Autocorrelation
+
+moran.test(res.sar, listw=W_vot_mat, zero.policy=T)
+
+############################## Efecto Equilibrio ##############################
+
+## Extracci?n de Pesos
+
+names <- attr(W_vot,"region.id")
+
+W <- matrix(0,nrow=length(names),ncol=length(names))
+for(i in 1:length(names)){
+  W[i,as.vector(W_vot[[i]])] <- 1
+}
+
+I <- matrix(0,nrow=nrow(mapa_santander_mun),ncol=nrow(mapa_santander_mun))
+diag(I) <- 1
+
+mapa_santander_mun@data[mapa_santander_mun@data$DPTOMPIO == '68001' | mapa_santander_mun@data$DPTOMPIO == '68081' | mapa_santander_mun@data$DPTOMPIO == '68235',]
+
+X0 <- cbind(mapa_santander_mun$Tasa.de.mortalidad.infantil)
+X1 <- cbind(mapa_santander_mun$Tasa.de.mortalidad.infantil)
+X1[1] <- 1.1*X1[1] 
+X1[7] <- 1.1*X1[7] ### preguntas
+X1[26] <- 1.1*X1[26]
+Xd <- X1-X0
+
+############################### Efecto Equilibrio ###############################
+
+## SAR
+beta.sar <- mod.sar$coefficients
+rho.sar <- mod.sar$rho
+
+EE.sar <- solve(I - rho.sar*W)%*%Xd*beta.sar[2]
+names(EE.sar) <- mapa_santander_mun$Entidad
+top.sar <- EE.sar[rev(order(EE.sar))][1:20]
+as.data.frame(top.sar)  ## Top 20
+
+## OLS
+beta.lm <- mod.lm$coefficients
+rho.lm <- 0
+
+EE.lm <- solve(I - rho.lm*W)%*%Xd*beta.lm[2]
+names(EE.lm) <- mapa_santander_mun$Entidad
+EE.lm[c(1,149)]
+
+## SEM
+
+mod.sem <- errorsarlm(Tasa.de.mortalidad.infantil ~ IPM.y, data = mapa_santander_mun, listw=W_vot_mat, zero.policy=T, tol.solve=1e-15)
+summary(mod.sem)
+
+res.sem <- mod.sem$residuals
+
+classes_fx <- classIntervals(res.sem, n=5, style="fisher")
+cols <- findColours(classes_fx,pal)
+
+par(mar=rep(0,4),  bg="lightblue")
+plot(mapa_santander_mun,col=cols, border=cols)
+legend(x="topleft",cex=1,fill=attr(cols,"palette"),bty="n",
+       legend=names(attr(cols, "table")),title="Residuals from SEM Model",ncol=1)
+
+## Residual Autocorrelation
+
+moran.test(res.sem, listw=W_vot_mat, zero.policy=T)
+
+## SDM 
+mod.sdm <- lagsarlm(Tasa.de.mortalidad.infantil ~ IPM.y, data = mapa_santander_mun, listw=W_vot_mat, zero.policy=T, type="mixed", tol.solve=1e-12)
+summary(mod.sdm)
+
+res.sdm <- mod.sdm$residuals
+
+classes_fx <- classIntervals(res.sdm, n=5, style= 'fisher')
+cols <- findColours(classes_fx,pal)
+
+par(mar=rep(0,4),  bg="lightblue")
+plot(mapa_santander_mun,col=cols, border= cols)
+legend(x="topleft",cex=1,fill=attr(cols,"palette"),bty="n",
+       legend=names(attr(cols, "table")),title="Residuals from SDM Model",ncol=1)
+
+## Residual Autocorrelation
+
+moran.test(res.sdm, listw=W_vot_mat, zero.policy=T)
+
+AIC(mod.lm,mod.sar,mod.sem,mod.sdm)
